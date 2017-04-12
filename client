@@ -23,7 +23,7 @@ except Exception:
 
 # Encryption objects
 backend = default_backend()
-PSK_hex = "" ### REDACTED ###
+PSK_hex = "0000000000000000000000000000000000000000000000000000000000000000" ### REDACTED ###
 PSK = PSK_hex.decode('hex')
 
 
@@ -136,7 +136,6 @@ while 1:
 	
 		DHK = generate_dh_key(A, b, p)
 		secret = decrypt_data(recv_data['DH_K{secret}'].decode('hex'), DHK, iv)
-		#print("Secret received: " + secret)
 		print("Secret received!")
 	
 		# Close the socket when transfer is finished
