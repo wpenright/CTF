@@ -1,0 +1,161 @@
+#!/usr/bin/python2
+
+# CLIENT
+# Initiates request to server and receives 'secured' FLAG value
+
+import socket
+import time
+import os
+import sys
+import json
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import padding
+
+### Configuration settings ###
+try:
+	server_host = sys.argv[1]
+	server_port = int(sys.argv[2])
+except Exception:
+    print("Usage:\t./client SERVER_IP SERVER_PORT")
+    exit()
+
+
+# Encryption objects
+backend = default_backend()
+PSK_hex = "" ### REDACTED ###
+PSK = PSK_hex.decode('hex')
+
+
+# Encrypt with the given AES key and return the ciphertext
+def encrypt_data(plaintext_data, key, iv):
+	# Create the AES cipher and encryptor
+	cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=backend)
+	encryptor = cipher.encryptor()
+
+	# Pad the data as needed
+	padder = padding.PKCS7(128).padder()
+	padded_data = padder.update(plaintext_data) + padder.finalize()
+
+	# Return the encrypted data
+	return encryptor.update(padded_data) + encryptor.finalize()
+	
+
+# Decrypt with the given AES key and return the plaintext
+def decrypt_data(encrypted_data, key, iv):
+	# Create the AES cipher and decryptor
+	cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=backend)
+	decryptor = cipher.decryptor()
+
+	# Unencrypt the data
+	plaintext_data = decryptor.update(encrypted_data) + decryptor.finalize()
+
+	# Unpad the data as needed
+	unpadder = padding.PKCS7(128).unpadder()
+	unpadded_data = unpadder.update(plaintext_data) + unpadder.finalize()
+
+	# Return the unencrypted data
+	return unpadded_data
+
+
+# Generate a 4-byte nonce, as an int
+def generate_nonce():
+	return int(os.urandom(4).encode('hex'), 16)
+
+# Generate a secret value for dh exchange (128-bit number)
+def generate_secret():
+	# Return a 16-byte (128 bit) random value, intepreted as an int
+	return int(os.urandom(16).encode('hex'), 16)
+
+# Generate a resultant from p, g, and our secret value
+# 	p	Prime modulus
+#	g	Generator
+#	a	Our secret value
+# Return: (g^a) mod p
+def generate_resultant(p, g, a):
+	return pow(g, a, p)
+
+# Convert an int/long to string of bytes
+def to_bytes(n, length):
+	h = '%x' % n
+	s = ('0'*(len(h) % 2) + h).zfill(length*2).decode('hex')
+	return s
+
+# Generate the Diffie-Hellman shared key
+#	B	Other parties resultant
+#	a	Our secret value
+# 	p	Prime modulus
+# Return: [(B^a) mod p] as a string of bytes
+def generate_dh_key(B, a, p):
+	return to_bytes(pow(B, a, p), 32)
+
+
+# Repeatedly attempt the protocol exchange
+while 1:
+	try:
+		# Delay before next connection
+		time.sleep(5)
+
+		# Create server socket
+		client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		client_socket.settimeout(5)
+	
+		# Connect to the server
+		client_socket.connect((server_host,server_port))
+		print("Connected to server on " + server_host + " : " + str(server_port) + "...")
+	
+		# Send nonce to server
+		nonce = generate_nonce()
+		data = {'nonce': nonce, 'README':'Client info at https://github.com/wpenright/CTF'}
+		client_socket.send(json.dumps(data))
+	
+		# Get p, g, A, iv, and K{nonce} from server
+		recv_json = client_socket.recv(1024)
+		recv_data = json.loads(recv_json)
+		p = long(recv_data['p'], 16)
+		g = recv_data['g']
+		A = long(recv_data['A'], 16)
+		iv = recv_data['iv'].decode('hex')
+	
+		# Verify nonce
+		recv_nonce = long(decrypt_data(recv_data['K{nonce}'].decode('hex'), PSK, iv), 16)
+		if recv_nonce != nonce:
+			raise ValueError('Nonce mismatch!')
+		
+		# Generate and send K{B} to the server
+		b = generate_secret()
+		B = generate_resultant(p, g, b)
+		B_crypt = encrypt_data(hex(B), PSK, iv)
+		data = {'iv': iv.encode('hex'), 'K{B}': B_crypt.encode('hex')}
+		client_socket.send(json.dumps(data))
+	
+		# Receive and decrypt the secret from the server
+		recv_json = client_socket.recv(1024)
+		recv_data = json.loads(recv_json)
+		iv = recv_data['iv'].decode('hex')
+	
+		DHK = generate_dh_key(A, b, p)
+		secret = decrypt_data(recv_data['DH_K{secret}'].decode('hex'), DHK, iv)
+		#print("Secret received: " + secret)
+		print("Secret received!")
+	
+		# Close the socket when transfer is finished
+		client_socket.close()
+	
+	except socket.error as err:
+		print(err)
+		print("Connection to server failed...")
+		if client_socket:
+			client_socket.close()
+
+	except Exception as err:
+		print(err)
+		print("Protocol Failed. Closing connection...")
+		if client_socket:
+			client_socket.close()
+		
+	except:
+		print("\nKeyboard interrupt. Quitting...")
+		if client_socket:
+			client_socket.close()
+		sys.exit(0)
