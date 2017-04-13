@@ -111,6 +111,9 @@ while 1:
 	
 		# Get p, g, A, iv, and K{nonce} from server
 		recv_json = client_socket.recv(1024)
+		if len(recv_json) == 0:
+			raise ValueError('No data from socket!')
+
 		recv_data = json.loads(recv_json)
 		p = long(recv_data['p'], 16)
 		g = recv_data['g']
@@ -131,12 +134,15 @@ while 1:
 	
 		# Receive and decrypt the secret from the server
 		recv_json = client_socket.recv(1024)
+		if len(recv_json) == 0:
+			raise ValueError('No data from socket!')
+		
 		recv_data = json.loads(recv_json)
 		iv = recv_data['iv'].decode('hex')
 	
 		DHK = generate_dh_key(A, b, p)
 		secret = decrypt_data(recv_data['DH_K{secret}'].decode('hex'), DHK, iv)
-		print("Secret received!")
+		print("Secret received: " + secret)
 	
 		# Close the socket when transfer is finished
 		client_socket.close()
